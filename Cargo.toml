@@ -1,0 +1,21 @@
+[package]
+name = "gpu_render_template"
+version = "0.1.0"
+edition = "2021"
+
+[target.x86_64-pc-windows-gnu]
+[target.x86_64-pc-windows-msvc]
+
+#[package.metadata.docs.rs]
+#targets = [
+#  "x86_64-pc-windows-msvc",
+#  "x86_64-pc-windows-gnu"
+#]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytemuck = "1.14.0"
+pollster = "0.3.0"
+wgpu = {git = "https://github.com/gfx-rs/wgpu.git", features = ["glsl", "spirv"]}
+winit = "0.29.3"
