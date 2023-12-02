@@ -461,7 +461,7 @@ impl<'a> WindowState<'a> {
             match self.update_shader() {
                 Some(mod_time) => {
                     // IDK why this is in this match
-                    //self.recompile_time = mod_time;
+                    // self.recompile_time = mod_time;
                 },
                 None => {
                 }
