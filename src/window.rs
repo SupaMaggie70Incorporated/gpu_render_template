@@ -1,14 +1,16 @@
 use std::{io::{stdin, BufReader, BufRead, Read}, sync::{Arc, Mutex}, thread, ops::{Deref, DerefMut}, path::Path, time::SystemTime, borrow::BorrowMut, ffi::OsStr, collections::{HashMap, BTreeMap, hash_map::{DefaultHasher, RandomState}}, hash::{BuildHasher, BuildHasherDefault}};
 
 use bytemuck::{Zeroable, Pod};
-use wgpu::{util::{DeviceExt, BufferInitDescriptor}, BufferUsages, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BufferBindingType, InstanceFlags, StoreOp, Surface, ShaderModule, RenderPipeline, Device, SurfaceConfiguration, BindGroupLayout, ShaderModuleDescriptor, ShaderSource, ShaderModuleDescriptorSpirV, naga::{front::glsl::{Options}, FastHashMap}};
+use wgpu::{util::{DeviceExt, BufferInitDescriptor}, BufferUsages, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BufferBindingType, InstanceFlags, StoreOp, Surface, ShaderModule, RenderPipeline, Device, SurfaceConfiguration, BindGroupLayout, ShaderModuleDescriptor, ShaderSource, ShaderModuleDescriptorSpirV, naga::{front::glsl::{Options}, FastHashMap, valid::ValidationFlags}};
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
-    window::Window
+    window::Window, monitor::VideoMode
 };
 use std::fs;
+
+use wgpu::naga::{self, valid, front};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -88,8 +90,7 @@ struct WindowState<'a> {
     // it gets dropped after it as the surface contains
     // unsafe references to the window's resources.
     pub window: &'a Window,
-    pub vertex_shader_wgsl: wgpu::ShaderModule,
-    pub vertex_shader_glsl: wgpu::ShaderModule,
+    pub vertex_shader: wgpu::ShaderModule,
     pub render_pipeline: wgpu::RenderPipeline,
     pub fragment_uniform_buffer: wgpu::Buffer,
     pub staging_fragment_uniform_buffer: wgpu::Buffer,
@@ -101,6 +102,8 @@ struct WindowState<'a> {
     pub shader_type: ShaderType,
     pub recompile_time: SystemTime,
     pub console_hook: Arc<Mutex<Vec<String>>>,
+
+    pub default_shader: ShaderModule,
 }
 
 
@@ -148,11 +151,10 @@ impl<'a> WindowState<'a> {
             },
             None, // Trace path
         ).await.unwrap();
-        let juliabrot_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let default_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("default.wgsl").into()),
         });
-        let shader = juliabrot_shader;
 
         let width = size.width.min(size.height) as f32;
         let fragment_uniforms: FragmentUniforms = FragmentUniforms {
@@ -215,10 +217,6 @@ impl<'a> WindowState<'a> {
             label: None,
             source: ShaderSource::Wgsl(include_str!("vertex.wgsl").into())
         });
-        let vertex_shader_glsl = device.create_shader_module(ShaderModuleDescriptor {
-            label: None,
-            source: ShaderSource::Wgsl(include_str!("vertex.wgsl").into())
-        });
         /*println!("Compiling glsl vertex shader");
         let vertex_shader_glsl = device.create_shader_module(ShaderModuleDescriptor {
             label: None,
@@ -228,8 +226,7 @@ impl<'a> WindowState<'a> {
                 defines: HashMap::default()
             }
         });*/
-
-        let render_pipeline = WindowState::make_render_pipeline(&device, &config, &bind_group_layout, &vertex_shader_wgsl, shader);
+        let render_pipeline = WindowState::make_render_pipeline(&device, &config, &bind_group_layout, &vertex_shader_wgsl, &default_shader);
         WindowState {
             window,
             surface,
@@ -237,8 +234,7 @@ impl<'a> WindowState<'a> {
             queue,
             config,
             size,
-            vertex_shader_wgsl,
-            vertex_shader_glsl,
+            vertex_shader: vertex_shader_wgsl,
             render_pipeline,
             fragment_uniform_buffer,
             staging_fragment_uniform_buffer,
@@ -249,10 +245,12 @@ impl<'a> WindowState<'a> {
             shader_file: None,
             shader_type: ShaderType::UNKNOWN,
             recompile_time: SystemTime::now(),
-            console_hook: child_stream_to_vec(stdin())
+            console_hook: child_stream_to_vec(stdin()),
+
+            default_shader
         }
     }
-    fn make_render_pipeline(device: &Device, config: &SurfaceConfiguration, bind_group_layout: &BindGroupLayout, vertex_shader: &ShaderModule, fragment_shader: ShaderModule) -> RenderPipeline {
+    fn make_render_pipeline(device: &Device, config: &SurfaceConfiguration, bind_group_layout: &BindGroupLayout, vertex_shader: &ShaderModule, fragment_shader: &ShaderModule) -> RenderPipeline {
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("render-pipeline-layout"),
             bind_group_layouts: &[&bind_group_layout],
@@ -439,8 +437,8 @@ impl<'a> WindowState<'a> {
             }
             value.clear();
         }
-        /*if self.window.inner_size() != self.size {
-            self.resize(self.window.inner_size());
+        /*if self.window.outer_size() != self.size {
+            self.resize(self.window.outer_size());
         }*/
         // Only check if we need to
         if !should_recompile && self.shader_type != ShaderType::UNKNOWN {
@@ -453,14 +451,17 @@ impl<'a> WindowState<'a> {
                 let data = path.metadata().expect("Unable to get file metadata");
                 let mod_time = data.modified().expect("Unable to get modification time of file");
                 if mod_time != self.recompile_time {
+                    //println!("Shader save time updated: ");
                     should_recompile = true;
+                    self.recompile_time = mod_time;
                 }
             }
         }
         if should_recompile {
             match self.update_shader() {
                 Some(mod_time) => {
-                    self.recompile_time = mod_time;
+                    // IDK why this is in this match
+                    //self.recompile_time = mod_time;
                 },
                 None => {
                 }
@@ -475,48 +476,75 @@ impl<'a> WindowState<'a> {
             return None
         }
         let path = Path::new(self.shader_file.as_mut().unwrap());
-        let (frag_shader, vertex_shader) = match self.shader_type {
+        let frag_shader = match self.shader_type {
             ShaderType::WGSL => {
                 let out = fs::read_to_string(path).expect("Unable to read text content of file");
-                (Some(self.device.create_shader_module(ShaderModuleDescriptor {
-                    label: None,
-                    source: ShaderSource::Wgsl(out.into())
-                })), &self.vertex_shader_wgsl)
+                let module = front::wgsl::parse_str(out.as_str());
+                match module {
+                    Ok(module) => {
+                        let valid = valid::Validator::new(valid::ValidationFlags::all(), valid::Capabilities::all())
+                            .validate(&module);
+                        match valid {
+                            Ok(_) => {
+                                let result: Result<ShaderModule, ()> = Ok({
+                                    self.device.create_shader_module(ShaderModuleDescriptor {
+                                        label: None,
+                                        source: ShaderSource::Wgsl(out.into())
+                                    })
+                                });
+                                match result {
+                                    Ok(value) => Some(value),
+                                    Err(_) => None
+                                }
+                            }
+                            Err(err) => {
+                                println!("WGSL validation error: {}", err);
+                                None
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        println!("WGSL parse error: {}", err);
+                        None
+                    }
+                }
             }
             ShaderType::GLSL => {
                 let out = fs::read_to_string(path).expect("Unable to read text content of file");
-                (Some(self.device.create_shader_module(ShaderModuleDescriptor {
+                Some(self.device.create_shader_module(ShaderModuleDescriptor {
                     label: None,
                     source: ShaderSource::Glsl {
                         shader: out.into(),
                         stage: wgpu::naga::ShaderStage::Fragment,
                         defines: HashMap::default()
                     }
-                })), &self.vertex_shader_glsl)
+                }))
             }
             ShaderType::HLSL => {
                 println!("Dependencies do not support hlsl.");
                 self.shader_type = ShaderType::UNKNOWN;
-                (None, &self.vertex_shader_wgsl)
+                None
             }
             ShaderType::SPIRV => {
                 let out = fs::read(path).expect("Unable to read binary contents of file");
-                unsafe {(Some(self.device.create_shader_module_spirv(&ShaderModuleDescriptorSpirV {
+                unsafe {Some(self.device.create_shader_module_spirv(&ShaderModuleDescriptorSpirV {
                     label: None,
                     source: wgpu::util::make_spirv_raw(&out[..])
-                })), &self.vertex_shader_glsl)}
+                }))}
             }
             _ => {
-                (None, &self.vertex_shader_wgsl)
+                None
             }
         };
         match frag_shader {
             Some(shader) => {
                 self.should_render = true;
-                self.render_pipeline = WindowState::make_render_pipeline(&self.device, &self.config, &self.bind_group_layout, vertex_shader, shader);
+                self.render_pipeline = WindowState::make_render_pipeline(&self.device, &self.config, &self.bind_group_layout, &self.vertex_shader, &shader);
                 return Some(path.metadata().unwrap().modified().unwrap())
             }
             None => {
+                self.should_render = true;
+                self.render_pipeline = WindowState::make_render_pipeline(&self.device, &self.config, &self.bind_group_layout, &self.vertex_shader, &self.default_shader);
                 return None;
             }
         }
