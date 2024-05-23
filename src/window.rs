@@ -1,4 +1,4 @@
-use std::{io::{stdin, BufReader, BufRead, Read}, sync::{Arc, Mutex}, thread, ops::{Deref, DerefMut}, path::Path, time::SystemTime, borrow::BorrowMut, ffi::OsStr, collections::{HashMap, BTreeMap, hash_map::{DefaultHasher, RandomState}}, hash::{BuildHasher, BuildHasherDefault}};
+use std::{io::{stdin, BufReader, BufRead, Read}, sync::{Arc, Mutex}, thread, ops::{Deref, DerefMut}, path::Path, time::SystemTime, borrow::BorrowMut, ffi::OsStr, collections::{HashMap, BTreeMap, hash_map::{DefaultHasher, RandomState}}, hash::{BuildHasher, BuildHasherDefault}, alloc::GlobalAlloc};
 
 use bytemuck::{Zeroable, Pod};
 use wgpu::{util::{DeviceExt, BufferInitDescriptor}, BufferUsages, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BufferBindingType, InstanceFlags, StoreOp, Surface, ShaderModule, RenderPipeline, Device, SurfaceConfiguration, BindGroupLayout, ShaderModuleDescriptor, ShaderSource, ShaderModuleDescriptorSpirV, naga::{front::glsl::{Options}, FastHashMap, valid::ValidationFlags}};
@@ -603,11 +603,11 @@ pub async fn run() {
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new().with_title("Gpu Render Template").build(&event_loop).unwrap();
     let mut state = WindowState::new(&window).await;
-
-    event_loop.run(move |event, target| {
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run(|event, target| {
+        target.set_control_flow(ControlFlow::Poll);
         match event {
             Event::AboutToWait => {
-                state.update();
             }
             Event::NewEvents(_) => {
             }
@@ -621,6 +621,7 @@ pub async fn run() {
                         
                     }
                     WindowEvent::RedrawRequested => {
+                        state.update();
                         match state.render() {
                             Ok(_) => {}
                             // Reconfigure the surface if lost
@@ -630,6 +631,7 @@ pub async fn run() {
                             // All other errors (Outdated, Timeout) should be resolved by the next frame
                             Err(e) => eprintln!("{:?}", e),
                         }
+                        window.request_redraw();
                     }
                     WindowEvent::Resized(physical_size) => {
                         state.resize(*physical_size);

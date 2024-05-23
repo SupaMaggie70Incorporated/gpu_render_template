@@ -18,4 +18,4 @@ edition = "2021"
 bytemuck = "1.14.0"
 pollster = "0.3.0"
 wgpu = {git = "https://github.com/gfx-rs/wgpu.git", features = ["glsl", "spirv"]}
-winit = "0.29.3"
+winit = "0.29.4"
