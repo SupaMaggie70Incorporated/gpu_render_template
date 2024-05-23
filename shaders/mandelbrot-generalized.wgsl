@@ -1,16 +1,3 @@
-// Generalized mandelbrot to any dimension using euler's formula, autoadjusts viewport so that the scale is always the same
-// Similar to the multibrot set, which generalizes the mandelbrot set to higher, but only integer, dimensions
-// The mandelbrot set technically only includes points on the boundary, but this shades points by how quickly they diverge.
-// Points which don't diverge are put at black, the same color as the fastest points which do converge to add contrast, if it wasn't this way it would be awful to look at, picture a giant ugly bright green blob
-// The very visible contour-esque lines are an artifact of computer screens' weird color systems.
-// For the sake of seeing in the near-dark, humans are better at differentiating very dark colors. 
-// As a result, images and the like are often stored in sRGB, a color space which focuses more on the darker colors than the lighter colors.
-// This means that darker colors are given a disproportionate range of brightness values, while brighter colors are given disproportionately few.
-// For the sake of not having to transform images back to unscaled color manually, graphics libraries typically transform the output drawn to the screen themself.
-// This involves squeezing the dark parts into less values and stretching the light parts out into more.
-// Since this isn't done in sRGB, but is being treated like it is, the darkest colors are being squeezed very few colors, which results in very sharp contour-lines
-// I didn't handle this because it works differently on every platform, e.g. web vs desktop which uses DirectX or Vulkan. sRGB is the recommended way to do rendering, and I didn't wanna mess around with it.
-
 struct FragmentUniforms {
     size: vec2<f32>,
     mouse: vec2<f32>

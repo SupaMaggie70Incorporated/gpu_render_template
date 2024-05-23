@@ -1,6 +1,3 @@
-// Mandelbar, also called tricorn.
-// Often, it is displayed less smoothly such that it looks less like a deformed mandelbrot set and more like a cool 3 pointed shape.
-
 struct FragmentUniforms {
     size: vec2<f32>,
     mouse: vec2<f32>

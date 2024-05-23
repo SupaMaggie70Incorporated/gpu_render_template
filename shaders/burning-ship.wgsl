@@ -17,7 +17,7 @@ fn burning_ship(point: vec2<f32>, zoom: f32) -> f32 {
             return f32(i) / f32(iterations);
         }
     }
-    return 0.0;
+    return 1.0;
 }
 
 @fragment
